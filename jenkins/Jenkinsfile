@@ -59,16 +59,36 @@ pipeline {
         stage('Docker Build & Push to ECR') {
             steps {
                 dir('spring-boot-app') {
-                    withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
-                        withAWS(credentials: 'aws-credentials', region: "${AWS_REGION}") {
-                            sh '''
-                                echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-                                aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REPO
-                                docker build -t java-app:$IMAGE_TAG .
-                                docker tag java-app:$IMAGE_TAG $ECR_REPO:$IMAGE_TAG
-                                docker push $ECR_REPO:$IMAGE_TAG
-                            '''
-                        }
+                    withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS'),
+                                     string(credentialsId: 'aws-credentials', variable: 'AWS_SECRET_ACCESS_KEY'),
+                                     string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID')]) {
+                        sh '''
+                            # Install AWS CLI if missing
+                            if ! command -v aws &> /dev/null; then
+                                echo "Installing AWS CLI..."
+                                curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+                                unzip -oq awscliv2.zip
+                                ./aws/install --update -i $HOME/.local/aws-cli -b $HOME/.local/bin
+                            fi
+                            export PATH="$HOME/.local/bin:$PATH"
+                            aws --version
+
+                            # Configure AWS credentials for CLI
+                            aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID
+                            aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
+                            aws configure set default.region $AWS_REGION
+
+                            # Login to AWS ECR
+                            aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REPO
+
+                            # Build and push Docker image
+                            docker build -t java-app:$IMAGE_TAG .
+                            docker tag java-app:$IMAGE_TAG $ECR_REPO:$IMAGE_TAG
+                            docker push $ECR_REPO:$IMAGE_TAG
+
+                            # Logout docker from ECR
+                            docker logout $ECR_REPO
+                        '''
                     }
                 }
             }
@@ -76,15 +96,17 @@ pipeline {
 
         stage('Update K8s Manifest & Push') {
             steps {
-                script {
-                    sh """
-                        sed -i 's|image:.*|image: $ECR_REPO:$IMAGE_TAG|' manifests/deployment.yaml
-                        git config user.email "jenkins@example.com"
-                        git config user.name  "Jenkins CI"
-                        git add manifests/deployment.yaml
-                        git commit -m "chore: bump image tag to $IMAGE_TAG"
-                        git push origin main
-                    """
+                dir('manifests') {
+                    script {
+                        sh """
+                            sed -i 's|image:.*|image: $ECR_REPO:$IMAGE_TAG|' deployment.yaml
+                            git config user.email "jenkins@example.com"
+                            git config user.name "Jenkins CI"
+                            git add deployment.yaml
+                            git commit -m "chore: bump image tag to $IMAGE_TAG"
+                            git push origin main
+                        """
+                    }
                 }
             }
         }
