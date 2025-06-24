@@ -1,10 +1,5 @@
 pipeline {
-    agent {
-        docker {
-            image 'maven:3.9.4-eclipse-temurin-17'
-            args '-v $HOME/.m2:/root/.m2'
-        }
-    }
+    agent none
 
     environment {
         AWS_REGION = 'us-east-1'
@@ -14,12 +9,19 @@ pipeline {
 
     stages {
         stage('Checkout') {
+            agent any
             steps {
                 git 'https://github.com/priyaraghunath/java-app-argocd.git'
             }
         }
 
         stage('Build & Package') {
+            agent {
+                docker {
+                    image 'maven:3.9.4-eclipse-temurin-17'
+                    args '-v $HOME/.m2:/root/.m2'
+                }
+            }
             steps {
                 dir('spring-boot-app') {
                     sh 'mvn clean package -DskipTests'
@@ -28,6 +30,12 @@ pipeline {
         }
 
         stage('Test') {
+            agent {
+                docker {
+                    image 'maven:3.9.4-eclipse-temurin-17'
+                    args '-v $HOME/.m2:/root/.m2'
+                }
+            }
             steps {
                 dir('spring-boot-app') {
                     sh 'mvn test || true'
@@ -44,6 +52,12 @@ pipeline {
         }
 
         stage('SonarQube Analysis') {
+            agent {
+                docker {
+                    image 'maven:3.9.4-eclipse-temurin-17'
+                    args '-v $HOME/.m2:/root/.m2'
+                }
+            }
             steps {
                 dir('spring-boot-app') {
                     withSonarQubeEnv('MySonar') {
@@ -56,32 +70,30 @@ pipeline {
         }
 
         stage('Docker Build & Push to ECR') {
+            agent any  // Run on node with Docker & AWS CLI installed
             steps {
-                script {
-                    sh '''
-                    aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REPO
+                sh '''
+                aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REPO
 
-                    docker build -t java-app:$IMAGE_TAG .
-                    docker tag java-app:$IMAGE_TAG $ECR_REPO:$IMAGE_TAG
-                    docker push $ECR_REPO:$IMAGE_TAG
-                    '''
-                }
+                docker build -t java-app:$IMAGE_TAG .
+                docker tag java-app:$IMAGE_TAG $ECR_REPO:$IMAGE_TAG
+                docker push $ECR_REPO:$IMAGE_TAG
+                '''
             }
         }
 
         stage('Update K8s Manifest & Push') {
+            agent any
             steps {
-                script {
-                    sh """
-                    sed -i 's|image:.*|image: $ECR_REPO:$IMAGE_TAG|' manifests/deployment.yaml
+                sh """
+                sed -i 's|image:.*|image: $ECR_REPO:$IMAGE_TAG|' manifests/deployment.yaml
 
-                    git config user.email "jenkins@example.com"
-                    git config user.name  "Jenkins CI"
-                    git add manifests/deployment.yaml
-                    git commit -m "chore: bump image tag to $IMAGE_TAG"
-                    git push origin main
-                    """
-                }
+                git config user.email "jenkins@example.com"
+                git config user.name  "Jenkins CI"
+                git add manifests/deployment.yaml
+                git commit -m "chore: bump image tag to $IMAGE_TAG"
+                git push origin main
+                """
             }
         }
     }
