@@ -46,7 +46,7 @@ pipeline {
         stage('SonarQube Analysis') {
             steps {
                 dir('spring-boot-app') {
-                    withSonarQubeEnv('SonarQubeServer') {
+                    withSonarQubeEnv('MySonar') {
                         sh 'mvn sonar:sonar'
                     }
                 }
