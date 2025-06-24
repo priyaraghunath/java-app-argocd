@@ -30,7 +30,9 @@ pipeline {
         stage('Test') {
             steps {
                 dir('spring-boot-app') {
+                    // Run tests but continue even if tests fail
                     sh 'mvn test || true'
+
                     script {
                         def testReports = findFiles(glob: 'target/surefire-reports/*.xml')
                         if (testReports.length > 0) {
@@ -47,7 +49,10 @@ pipeline {
             steps {
                 dir('spring-boot-app') {
                     withSonarQubeEnv('MySonar') {
-                        sh 'mvn sonar:sonar'
+                        withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
+                            // Pass sonar token to Maven
+                            sh "mvn sonar:sonar -Dsonar.login=${SONAR_TOKEN}"
+                        }
                     }
                 }
             }
@@ -55,15 +60,15 @@ pipeline {
 
         stage('Docker Build & Push to ECR') {
             steps {
-                script {
-                    sh '''
-                    aws ecr get-login-password --region $AWS_REGION \
-                      | docker login --username AWS --password-stdin $ECR_REPO
-
-                    docker build -t java-app:$IMAGE_TAG .
-                    docker tag java-app:$IMAGE_TAG $ECR_REPO:$IMAGE_TAG
-                    docker push $ECR_REPO:$IMAGE_TAG
-                    '''
+                dir('spring-boot-app') {
+                    script {
+                        sh """
+                        aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REPO
+                        docker build -t java-app:$IMAGE_TAG .
+                        docker tag java-app:$IMAGE_TAG $ECR_REPO:$IMAGE_TAG
+                        docker push $ECR_REPO:$IMAGE_TAG
+                        """
+                    }
                 }
             }
         }
