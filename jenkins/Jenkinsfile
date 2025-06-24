@@ -1,16 +1,10 @@
 pipeline {
-    agent {
-        docker {
-            image 'maven:3.9.4-eclipse-temurin-17'
-            args '-v $HOME/.m2:/root/.m2 -v /var/run/docker.sock:/var/run/docker.sock'
-            // Docker socket mounted so docker CLI works inside container
-        }
-    }
+    agent any
 
     environment {
         AWS_REGION = 'us-east-1'
         ECR_REPO   = '682033504000.dkr.ecr.us-east-1.amazonaws.com/java-app'
-        IMAGE_TAG  = "${env.BUILD_NUMBER}"
+        IMAGE_TAG  = "${BUILD_NUMBER}"
     }
 
     stages {
@@ -21,6 +15,12 @@ pipeline {
         }
 
         stage('Build & Package') {
+            agent {
+                docker {
+                    image 'maven:3.9.4-eclipse-temurin-17'
+                    args '-v $HOME/.m2:/root/.m2'
+                }
+            }
             steps {
                 dir('spring-boot-app') {
                     sh 'mvn clean package -DskipTests'
@@ -29,6 +29,12 @@ pipeline {
         }
 
         stage('Test') {
+            agent {
+                docker {
+                    image 'maven:3.9.4-eclipse-temurin-17'
+                    args '-v $HOME/.m2:/root/.m2'
+                }
+            }
             steps {
                 dir('spring-boot-app') {
                     sh 'mvn test || true'
@@ -48,24 +54,32 @@ pipeline {
             steps {
                 dir('spring-boot-app') {
                     withSonarQubeEnv('MySonar') {
-                        // Pass sonar.login token if needed by Maven
-                        sh 'mvn sonar:sonar -Dsonar.login=$SONAR_AUTH_TOKEN'
+                        withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
+                            sh 'mvn sonar:sonar -Dsonar.login=$SONAR_TOKEN'
+                        }
                     }
                 }
             }
         }
 
-        stage('Docker Build and Push') {
+        stage('Docker Build & Push to ECR') {
             steps {
-                dir('spring-boot-app') {
-                    script {
-                        def imageTag = "cupiemayo/myapp:${env.BUILD_NUMBER}"
-                        sh "docker build -t ${imageTag} ."
-                        withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_CREDENTIALS_USR', passwordVariable: 'DOCKER_CREDENTIALS_PSW')]) {
-                            sh "echo $DOCKER_CREDENTIALS_PSW | docker login -u $DOCKER_CREDENTIALS_USR --password-stdin"
+                withCredentials([
+                    usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')
+                ]) {
+                    dir('spring-boot-app') {
+                        script {
+                            sh '''
+                            echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
+
+                            aws ecr get-login-password --region $AWS_REGION | \
+                            docker login --username AWS --password-stdin $ECR_REPO
+
+                            docker build -t java-app:$IMAGE_TAG .
+                            docker tag java-app:$IMAGE_TAG $ECR_REPO:$IMAGE_TAG
+                            docker push $ECR_REPO:$IMAGE_TAG
+                            '''
                         }
-                        sh "docker push ${imageTag}"
-                        env.IMAGE_TAG = imageTag
                     }
                 }
             }
@@ -75,11 +89,12 @@ pipeline {
             steps {
                 script {
                     sh """
-                    sed -i 's|image:.*|image: ${env.IMAGE_TAG}|' manifests/deployment.yaml
+                    sed -i 's|image:.*|image: $ECR_REPO:$IMAGE_TAG|' manifests/deployment.yaml
+
                     git config user.email "jenkins@example.com"
                     git config user.name  "Jenkins CI"
                     git add manifests/deployment.yaml
-                    git commit -m "chore: bump image tag to ${env.IMAGE_TAG}"
+                    git commit -m "chore: bump image tag to $IMAGE_TAG"
                     git push origin main
                     """
                 }
