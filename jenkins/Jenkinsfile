@@ -3,32 +3,39 @@ pipeline {
 
     environment {
         AWS_REGION = 'us-east-1'
-        ECR_REPO = '<aws_account_id>.dkr.ecr.us-east-1.amazonaws.com/java-app'
+        ECR_REPO = '682033504000.dkr.ecr.us-east-1.amazonaws.com/java-app'
+        IMAGE_TAG = "${env.BUILD_NUMBER}"
     }
 
     stages {
         stage('Checkout') {
             steps {
-                git 'https://github.com/yourname/java-app.git'
+                git 'https://github.com/priyaraghunath/java-app-argocd.git'
             }
         }
 
         stage('Build') {
             steps {
-                sh 'mvn clean package'
+                dir('spring-boot-app') {
+                    sh 'mvn clean package'
+                }
             }
         }
 
         stage('Test') {
             steps {
-                junit 'target/surefire-reports/*.xml'
+                dir('spring-boot-app') {
+                    junit 'target/surefire-reports/*.xml'
+                }
             }
         }
 
         stage('SonarQube Analysis') {
             steps {
-                withSonarQubeEnv('SonarQubeServer') {
-                    sh 'mvn sonar:sonar'
+                dir('spring-boot-app') {
+                    withSonarQubeEnv('SonarQubeServer') {
+                        sh 'mvn sonar:sonar'
+                    }
                 }
             }
         }
@@ -40,9 +47,9 @@ pipeline {
                     $(aws ecr get-login-password --region $AWS_REGION | \
                       docker login --username AWS --password-stdin $ECR_REPO)
 
-                    docker build -t java-app:$GIT_COMMIT .
-                    docker tag java-app:$GIT_COMMIT $ECR_REPO:$GIT_COMMIT
-                    docker push $ECR_REPO:$GIT_COMMIT
+                    docker build -t java-app:$IMAGE_TAG .
+                    docker tag java-app:$IMAGE_TAG $ECR_REPO:$IMAGE_TAG
+                    docker push $ECR_REPO:$IMAGE_TAG
                     '''
                 }
             }
@@ -50,7 +57,16 @@ pipeline {
 
         stage('Update GitOps Repo') {
             steps {
-                // Your logic to update Argo CD manifests
+                script {
+                    sh """
+                    sed -i 's|image:.*|image: $ECR_REPO:$IMAGE_TAG|' manifests/deployment.yaml
+                    git config user.email "jenkins@example.com"
+                    git config user.name "Jenkins CI"
+                    git add manifests/deployment.yaml
+                    git commit -m "Update image tag to $IMAGE_TAG"
+                    git push origin main
+                    """
+                }
             }
         }
     }
