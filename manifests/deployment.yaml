@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: demo
-          image: your-dockerhub-user/demo:latest
+          image: 682033504000.dkr.ecr.us-east-1.amazonaws.com/java-app:latest
           ports:
             - containerPort: 8080
 ---
