@@ -47,30 +47,29 @@ pipeline {
             steps {
                 dir('spring-boot-app') {
                     withSonarQubeEnv('MySonar') {
-                        sh 'mvn sonar:sonar'
+                        withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
+                            sh "mvn sonar:sonar -Dsonar.login=$SONAR_TOKEN"
+                        }
                     }
                 }
             }
         }
 
         stage('Docker Build & Push to ECR') {
-            agent any  // runs on node with Docker & AWS CLI
             steps {
-                dir('spring-boot-app') {
-                    script {
-                        sh '''
-                        aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REPO
-                        docker build -t java-app:$IMAGE_TAG .
-                        docker tag java-app:$IMAGE_TAG $ECR_REPO:$IMAGE_TAG
-                        docker push $ECR_REPO:$IMAGE_TAG
-                        '''
-                    }
+                script {
+                    sh '''
+                    aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REPO
+
+                    docker build -t java-app:$IMAGE_TAG .
+                    docker tag java-app:$IMAGE_TAG $ECR_REPO:$IMAGE_TAG
+                    docker push $ECR_REPO:$IMAGE_TAG
+                    '''
                 }
             }
         }
 
         stage('Update K8s Manifest & Push') {
-            agent any  // runs on node with git configured
             steps {
                 script {
                     sh """
