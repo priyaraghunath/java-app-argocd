@@ -36,7 +36,7 @@ pipeline {
                         if (testReports.length > 0) {
                             junit 'target/surefire-reports/*.xml'
                         } else {
-                            echo 'No test reports found, skipping junit archive.'
+                            echo 'No test reports found.'
                         }
                     }
                 }
@@ -45,7 +45,7 @@ pipeline {
 
         stage('SonarQube Analysis') {
             environment {
-                SONAR_TOKEN = credentials('sonar-token') // Make sure this credential is added
+                SONAR_TOKEN = credentials('sonar-token')
             }
             steps {
                 dir('spring-boot-app') {
@@ -57,9 +57,6 @@ pipeline {
         }
 
         stage('Docker Build & Push to ECR') {
-            agent {
-                label 'docker-enabled-agent' // ensure this agent has Docker + AWS CLI
-            }
             steps {
                 dir('spring-boot-app') {
                     withCredentials([
