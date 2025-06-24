@@ -1,7 +1,7 @@
 pipeline {
     agent {
         docker {
-            image 'maven:3.8.7-openjdk-17'
+            image 'maven:3.8.6-openjdk-17-slim'
             args '-v $HOME/.m2:/root/.m2'  // cache Maven repo between builds (optional)
         }
     }
