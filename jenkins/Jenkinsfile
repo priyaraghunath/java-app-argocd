@@ -1,15 +1,15 @@
 pipeline {
     agent {
         docker {
-            image 'maven:3.8.6-openjdk-17-slim'
-            args '-v $HOME/.m2:/root/.m2'  // cache Maven repo between builds (optional)
+            image 'maven:3.9.4-eclipse-temurin-17'
+            args '-v $HOME/.m2:/root/.m2'
         }
     }
 
     environment {
         AWS_REGION = 'us-east-1'
-        ECR_REPO = '682033504000.dkr.ecr.us-east-1.amazonaws.com/java-app'
-        IMAGE_TAG = "${env.BUILD_NUMBER}"
+        ECR_REPO   = '682033504000.dkr.ecr.us-east-1.amazonaws.com/java-app'
+        IMAGE_TAG  = "${env.BUILD_NUMBER}"
     }
 
     stages {
@@ -19,10 +19,10 @@ pipeline {
             }
         }
 
-        stage('Build') {
+        stage('Build & Package') {
             steps {
                 dir('spring-boot-app') {
-                    sh 'mvn clean package'
+                    sh 'mvn clean package -DskipTests'
                 }
             }
         }
@@ -30,6 +30,7 @@ pipeline {
         stage('Test') {
             steps {
                 dir('spring-boot-app') {
+                    sh 'mvn test'
                     junit 'target/surefire-reports/*.xml'
                 }
             }
@@ -49,9 +50,11 @@ pipeline {
             steps {
                 script {
                     sh '''
-                    $(aws ecr get-login-password --region $AWS_REGION | \
-                      docker login --username AWS --password-stdin $ECR_REPO)
+                    # login to ECR
+                    aws ecr get-login-password --region $AWS_REGION \
+                      | docker login --username AWS --password-stdin $ECR_REPO
 
+                    # build & push
                     docker build -t java-app:$IMAGE_TAG .
                     docker tag java-app:$IMAGE_TAG $ECR_REPO:$IMAGE_TAG
                     docker push $ECR_REPO:$IMAGE_TAG
@@ -60,15 +63,18 @@ pipeline {
             }
         }
 
-        stage('Update GitOps Repo') {
+        stage('Update K8s Manifest & Push') {
             steps {
                 script {
                     sh """
+                    # update image tag in your manifest
                     sed -i 's|image:.*|image: $ECR_REPO:$IMAGE_TAG|' manifests/deployment.yaml
+
+                    # commit & push back to Git
                     git config user.email "jenkins@example.com"
-                    git config user.name "Jenkins CI"
+                    git config user.name  "Jenkins CI"
                     git add manifests/deployment.yaml
-                    git commit -m "Update image tag to $IMAGE_TAG"
+                    git commit -m "chore: bump image tag to $IMAGE_TAG"
                     git push origin main
                     """
                 }
