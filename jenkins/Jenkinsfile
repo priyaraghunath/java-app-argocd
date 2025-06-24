@@ -1,5 +1,10 @@
 pipeline {
-    agent any
+    agent {
+        docker {
+            image 'maven:3.9.4-eclipse-temurin-17'
+            args '-v $HOME/.m2:/root/.m2'
+        }
+    }
 
     environment {
         AWS_REGION = 'us-east-1'
@@ -15,12 +20,6 @@ pipeline {
         }
 
         stage('Build & Package') {
-            agent {
-                docker {
-                    image 'maven:3.9.4-eclipse-temurin-17'
-                    args '-v $HOME/.m2:/root/.m2'
-                }
-            }
             steps {
                 dir('spring-boot-app') {
                     sh 'mvn clean package -DskipTests'
@@ -29,12 +28,6 @@ pipeline {
         }
 
         stage('Test') {
-            agent {
-                docker {
-                    image 'maven:3.9.4-eclipse-temurin-17'
-                    args '-v $HOME/.m2:/root/.m2'
-                }
-            }
             steps {
                 dir('spring-boot-app') {
                     sh 'mvn test || true'
@@ -50,42 +43,42 @@ pipeline {
             }
         }
 
-               stage('SonarQube Analysis') {
-            agent {
-                docker {
-                    image 'maven:3.9.4-eclipse-temurin-17'
-                    args '-v $HOME/.m2:/root/.m2'
-                }
+        stage('SonarQube Analysis') {
+            environment {
+                SONAR_TOKEN = credentials('sonar-token') // Make sure this credential is added
             }
             steps {
                 dir('spring-boot-app') {
                     withSonarQubeEnv('MySonar') {
-                        withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
-                            sh 'mvn sonar:sonar -Dsonar.login=$SONAR_TOKEN'
-                        }
+                        sh 'mvn sonar:sonar -Dsonar.login=$SONAR_TOKEN'
                     }
                 }
             }
         }
 
         stage('Docker Build & Push to ECR') {
+            agent {
+                label 'docker-enabled-agent' // ensure this agent has Docker + AWS CLI
+            }
             steps {
-                withCredentials([
-                    usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')
-                ]) {
-                    dir('spring-boot-app') {
-                        script {
-                            sh '''
-                            echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
+                dir('spring-boot-app') {
+                    withCredentials([
+                        usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS'),
+                        usernamePassword(credentialsId: 'aws-credentials', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')
+                    ]) {
+                        sh '''
+                            echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
 
-                            aws ecr get-login-password --region $AWS_REGION | \
-                            docker login --username AWS --password-stdin $ECR_REPO
+                            aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID
+                            aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
+                            aws configure set default.region $AWS_REGION
+
+                            aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REPO
 
                             docker build -t java-app:$IMAGE_TAG .
                             docker tag java-app:$IMAGE_TAG $ECR_REPO:$IMAGE_TAG
                             docker push $ECR_REPO:$IMAGE_TAG
-                            '''
-                        }
+                        '''
                     }
                 }
             }
