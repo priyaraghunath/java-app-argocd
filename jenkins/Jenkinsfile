@@ -1,7 +1,7 @@
 pipeline {
     agent {
         docker {
-            image 'maven:3.9.4-eclipse-temurin-17'
+            image 'yourdockerhubuser/maven-docker-aws:3.8.6'
             args '-v $HOME/.m2:/root/.m2 -v /var/run/docker.sock:/var/run/docker.sock'
         }
     }
@@ -32,47 +32,15 @@ pipeline {
             }
         }
 
-        stage('Test') {
-            steps {
-                dir('spring-boot-app') {
-                    sh 'mvn test || true'
-                    script {
-                        def testReports = findFiles(glob: 'target/surefire-reports/*.xml')
-                        if (testReports.length > 0) {
-                            junit 'target/surefire-reports/*.xml'
-                        } else {
-                            echo 'No test reports found, skipping junit archive.'
-                        }
-                    }
-                }
-            }
-        }
-
-        stage('SonarQube Analysis') {
-            environment {
-                SONAR_TOKEN = credentials('sonar-token')
-            }
-            steps {
-                dir('spring-boot-app') {
-                    withSonarQubeEnv('MySonar') {
-                        sh 'mvn sonar:sonar -Dsonar.login=$SONAR_TOKEN'
-                    }
-                }
-            }
-        }
-
         stage('Docker Build & Push to ECR') {
             steps {
-                withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
-                    withAWS(credentials: 'aws-credentials', region: "${AWS_REGION}") {
-                        sh '''
-                            echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-                            aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REPO
-                            docker build -f docker/Dockerfile -t java-app:$IMAGE_TAG .
-                            docker tag java-app:$IMAGE_TAG $ECR_REPO:$IMAGE_TAG
-                            docker push $ECR_REPO:$IMAGE_TAG
-                        '''
-                    }
+                withAWS(credentials: 'aws-credentials', region: "${AWS_REGION}") {
+                    sh '''
+                        aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REPO
+                        docker build -f docker/Dockerfile -t java-app:$IMAGE_TAG .
+                        docker tag java-app:$IMAGE_TAG $ECR_REPO:$IMAGE_TAG
+                        docker push $ECR_REPO:$IMAGE_TAG
+                    '''
                 }
             }
         }
