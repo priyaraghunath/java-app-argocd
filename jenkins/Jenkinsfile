@@ -59,32 +59,17 @@ pipeline {
         stage('Docker Build & Push to ECR') {
             steps {
                 dir('spring-boot-app') {
-                    withCredentials([
-                        usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')
-                    ]) {
-                        script {
+                    withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                        withAWS(credentials: 'aws-credentials', region: "${AWS_REGION}") {
                             sh '''
                                 echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-
-                                # AWS login via withAWS context
                                 aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REPO
-
                                 docker build -t java-app:$IMAGE_TAG .
                                 docker tag java-app:$IMAGE_TAG $ECR_REPO:$IMAGE_TAG
                                 docker push $ECR_REPO:$IMAGE_TAG
                             '''
                         }
                     }
-                }
-            }
-            environment {
-                AWS_REGION = 'us-east-1'
-            }
-            // wrap AWS CLI inside this block to use correct AWS credentials
-            // this requires "Pipeline: AWS Steps" plugin
-            steps {
-                withAWS(credentials: 'aws-credentials', region: "${AWS_REGION}") {
-                    // the actual shell runs above, using docker and aws
                 }
             }
         }
@@ -94,7 +79,6 @@ pipeline {
                 script {
                     sh """
                         sed -i 's|image:.*|image: $ECR_REPO:$IMAGE_TAG|' manifests/deployment.yaml
-
                         git config user.email "jenkins@example.com"
                         git config user.name  "Jenkins CI"
                         git add manifests/deployment.yaml
